@@ -1,4 +1,5 @@
 #include "average_counter.h"
+#include "sum_job.h"
 #include "thread_pool.h"
 
 #include <vector>
@@ -20,8 +21,10 @@ double CountAverageUsingThreads(std::vector<double>& values)
 {
     ThreadPool pool;
 
-    AverageCounter counter(pool, values);
-    double average = counter.getResult();
+    AverageCounter counter(values);
+    AverageCounter::count(counter, pool);
+
+    auto average = counter.getResult();
 
     std::cout << "Average using threads: " << average << std::endl;
 
@@ -30,7 +33,7 @@ double CountAverageUsingThreads(std::vector<double>& values)
 
 int main() try
 {
-    std::vector<double> values(100000);
+    std::vector<double> values(10000);
     std::iota(values.begin(), values.end(), 0);
 
     auto accumulate = CountAverageUsingAccumulate(values);

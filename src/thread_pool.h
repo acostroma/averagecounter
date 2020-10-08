@@ -12,6 +12,8 @@
 #include <typeinfo>
 #include <iostream>
 
+#include "job.h"
+
 
 class ThreadPool
 {
@@ -38,49 +40,53 @@ public:
             thread.join();
     }
 
-    template <typename Func, typename... Args>
-    auto push(Func&& f, Args&&... args)
+    template <typename T>
+    void push(std::unique_ptr<T>&& job)
     {
-        using RetType = std::invoke_result_t<Func, Args...>;
-        auto task = std::make_shared<std::packaged_task<RetType()>>([&f, &args...]() { return f(std::forward<Args>(args)...); });
-
         {
             std::scoped_lock<std::mutex> lock(mutex);
-            jobQueue.emplace([task]() { (*task)(); });
+            jobQueue.emplace(std::move(job));
         }
 
         condVar.notify_one();
-
-        return task->get_future();
     }
-    
+
+    template <typename Iterator>
+    void push(const Iterator& begin, const Iterator& end)
+    {
+        {
+            std::scoped_lock<std::mutex> lock(mutex);
+            std::for_each(begin, end, [&queue = jobQueue](auto& job) { queue.emplace(std::move(job)); });
+        }
+        condVar.notify_all();
+    }
+
 private:
     std::mutex mutex;
     std::condition_variable condVar;
     std::atomic<bool> terminate = false;
 
     std::vector<std::thread> threads;
-    std::queue<std::function<void()>> jobQueue;
+    std::queue<std::unique_ptr<Job>> jobQueue;
 
     void loop()
     {
         while (true)
         {
-            std::function<void()> job;
+            std::unique_lock<std::mutex> lock(mutex);
+            if (jobQueue.empty() || !terminate)
+                condVar.wait(lock);
 
-            {
-                std::unique_lock<std::mutex> lock(mutex);
-                if (jobQueue.empty() || !terminate)
-                    condVar.wait(lock);
+            if (terminate)
+                break;
 
-                if (terminate)
-                    break;
+            if (jobQueue.empty())
+                continue;
 
-                job = std::move(jobQueue.front());
-                jobQueue.pop();
-            }
-
-            job();
+            auto job = std::move(jobQueue.front());
+            jobQueue.pop();
+            lock.unlock();
+            job->run();
         }
     }
 };
